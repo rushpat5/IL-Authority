@@ -1,14 +1,11 @@
 [theme]
 base="light"
-primaryColor="#10b981"
+primaryColor="#16a34a"
 backgroundColor="#ffffff"
-secondaryBackgroundColor="#f0fdf4"
-textColor="#064e3b"
+secondaryBackgroundColor="#f6f7f9"
+textColor="#1f2937"
 font="sans serif"
 
 [server]
 headless = true
 enableCORS = false
-
-[ui]
-hideTopBar = false
