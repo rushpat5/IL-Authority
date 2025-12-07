@@ -1,18 +1,14 @@
 [theme]
 base="light"
-primaryColor="#2563eb"
+primaryColor="#10b981"
 backgroundColor="#ffffff"
-secondaryBackgroundColor="#f8fafc"
-textColor="#0f172a"
+secondaryBackgroundColor="#f0fdf4"
+textColor="#064e3b"
 font="sans serif"
 
 [server]
 headless = true
 enableCORS = false
-enableXsrfProtection = true
-
-[client]
-toolbarMode = "minimal"
 
 [ui]
 hideTopBar = false
