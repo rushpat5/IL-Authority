@@ -3,122 +3,88 @@ from typing import Dict, List, Tuple
 
 import pandas as pd
 import plotly.express as px
-import requests
 import streamlit as st
 from urllib.parse import urlparse, urlunparse
 
-# ---------------------------------------------------------
-# LOGGING
-# ---------------------------------------------------------
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)s: %(message)s",
-)
-logger = logging.getLogger(__name__)
-
-# ---------------------------------------------------------
-# STREAMLIT CONFIG & CUSTOM STYLES
-# ---------------------------------------------------------
+# =========================================================
+# PAGE CONFIG & STYLE
+# =========================================================
 st.set_page_config(
     page_title="Internal Authority Flow Analyzer",
-    page_icon="🕸️",
+    page_icon="🌿",
     layout="wide",
 )
 
+# Custom green UI theme
 st.markdown(
     """
     <style>
         :root {
-            --brand: #2563eb;
-            --brand-soft: #dbeafe;
+            --green-main: #10b981;
+            --green-soft: #ecfdf5;
             --bg: #ffffff;
-            --text: #0f172a;
-            --border: #e2e8f0;
-            --muted: #64748b;
+            --text: #064e3b;
+            --border: #d1fae5;
+            --muted: #6b7280;
         }
 
         .stApp {
             background-color: var(--bg);
             color: var(--text);
-            font-family: system-ui, -apple-system, BlinkMacSystemFont,
-                         "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            font-family: 'Inter', sans-serif;
         }
 
         section[data-testid="stSidebar"] {
-            background-color: #f8fafc;
+            background-color: var(--green-soft);
             border-right: 1px solid var(--border);
         }
 
         .metric-card {
             background: #ffffff;
-            border-radius: 12px;
+            border-radius: 10px;
             border: 1px solid var(--border);
             padding: 14px 18px;
-            box-shadow: 0 4px 10px rgba(15, 23, 42, 0.03);
+            box-shadow: 0 3px 8px rgba(0,0,0,0.04);
         }
 
         .metric-label {
-            font-size: 0.78rem;
-            text-transform: uppercase;
+            font-size: 0.8rem;
             color: var(--muted);
-            letter-spacing: 0.06em;
-            margin-bottom: 6px;
         }
 
         .metric-value {
             font-size: 1.3rem;
             font-weight: 700;
-            color: var(--text);
+            color: var(--green-main);
         }
 
         .context-box {
-            background: #ecfdf5;
-            border-left: 4px solid #16a34a;
-            padding: 14px 16px;
-            border-radius: 8px;
-            margin-bottom: 14px;
-            color: #14532d;
-            font-size: 0.95rem;
-            line-height: 1.5;
+            background: var(--green-soft);
+            border-left: 4px solid var(--green-main);
+            padding: 14px;
+            margin-bottom: 16px;
+            border-radius: 6px;
+            color: var(--text);
         }
 
         .stButton > button {
-            background-color: var(--brand) !important;
-            color: #ffffff !important;
-            border-radius: 999px !important;
-            padding: 0.5rem 1.4rem !important;
+            background-color: var(--green-main) !important;
+            color: white !important;
+            padding: 0.5rem 1.3rem !important;
+            border-radius: 8px !important;
             border: none;
-            font-weight: 600;
-            font-size: 0.95rem !important;
-        }
-
-        .pill {
-            display: inline-block;
-            padding: 4px 10px;
-            border-radius: 999px;
-            font-size: 0.75rem;
-            background: var(--brand-soft);
-            color: var(--brand);
-            font-weight: 500;
-            margin-right: 6px;
-            margin-bottom: 4px;
         }
     </style>
     """,
     unsafe_allow_html=True,
 )
 
-# ---------------------------------------------------------
+# =========================================================
 # HELPER FUNCTIONS
-# ---------------------------------------------------------
-def canonicalize_url(
-    url: str,
-    strip_query: bool = True,
-    strip_fragment: bool = True,
-) -> str:
-    """
-    Normalize URLs so that small differences don't fragment the graph.
-    """
+# =========================================================
+
+def canonicalize_url(url: str, strip_query=True, strip_fragment=True):
+    """Clean and simplify URLs so similar pages are treated as one."""
     if not isinstance(url, str):
         return ""
 
@@ -126,31 +92,23 @@ def canonicalize_url(
     if not url:
         return ""
 
-    try:
-        parsed = urlparse(url)
-    except Exception:
-        return url
-
+    parsed = urlparse(url)
     scheme = (parsed.scheme or "https").lower()
     netloc = parsed.netloc.lower()
 
     path = parsed.path or "/"
-    # normalize trailing slash
     if len(path) > 1 and path.endswith("/"):
         path = path[:-1]
 
-    query = "" if strip_query else (parsed.query or "")
-    fragment = "" if strip_fragment else (parsed.fragment or "")
+    query = "" if strip_query else parsed.query
+    fragment = "" if strip_fragment else parsed.fragment
 
     return urlunparse((scheme, netloc, path, "", query, fragment))
 
 
-def build_graph(df: pd.DataFrame) -> Tuple[Dict[str, List[str]], List[str]]:
-    """
-    Build adjacency list from filtered internal links.
-    Returns adjacency dict and sorted list of nodes.
-    """
-    adjacency: Dict[str, List[str]] = {}
+def build_graph(df: pd.DataFrame):
+    """Turn your list of links into a map of how your website connects."""
+    adjacency = {}
     nodes = set()
 
     for _, row in df.iterrows():
@@ -165,311 +123,200 @@ def build_graph(df: pd.DataFrame) -> Tuple[Dict[str, List[str]], List[str]]:
     return adjacency, sorted(nodes)
 
 
-def compute_pagerank(
-    adjacency: Dict[str, List[str]],
-    nodes: List[str],
-    damping: float = 0.85,
-    max_iter: int = 50,
-    tol: float = 1e-6,
-) -> Dict[str, float]:
-    """
-    Simple PageRank implementation:
-    - authority flows through links with damping factor (e.g. 0.85).
-    - (1 - damping) is the "loss" or teleport factor per hop.
-    """
+def compute_pagerank(adjacency, nodes, damping=0.85, max_iter=50, tol=1e-6):
+    """Simple internal authority flow model (PageRank style)."""
     N = len(nodes)
     if N == 0:
         return {}
 
-    # initial uniform distribution
     pr = {node: 1.0 / N for node in nodes}
     outdeg = {node: len(adjacency.get(node, [])) for node in nodes}
 
     for _ in range(max_iter):
-        new_pr = {node: (1.0 - damping) / N for node in nodes}
-        dangling_mass = sum(pr[node] for node in nodes if outdeg[node] == 0)
+        new_pr = {node: (1 - damping) / N for node in nodes}
+        dangling_mass = sum(pr[n] for n in nodes if outdeg[n] == 0)
 
-        # distribute from nodes with outgoing links
         for src in nodes:
             targets = adjacency.get(src, [])
-            if not targets:
-                continue
+            if not targets: continue
             share = pr[src] * damping / outdeg[src]
             for dst in targets:
                 new_pr[dst] += share
 
-        # distribute dangling mass
+        # spread dangling
         if dangling_mass > 0:
-            dangling_share = damping * dangling_mass / N
+            spread = damping * dangling_mass / N
             for node in nodes:
-                new_pr[node] += dangling_share
+                new_pr[node] += spread
 
-        diff = sum(abs(new_pr[n] - pr[n]) for n in nodes)
-        pr = new_pr
-        if diff < tol:
+        if sum(abs(new_pr[n] - pr[n]) for n in nodes) < tol:
             break
+        pr = new_pr
 
-    # normalize to sum to 1
     total = sum(pr.values())
-    if total > 0:
-        pr = {k: v / total for k, v in pr.items()}
-
-    return pr
+    return {k: v / total for k, v in pr.items()}
 
 
-# ---------------------------------------------------------
-# SIDEBAR CONTROLS
-# ---------------------------------------------------------
+# =========================================================
+# SIDEBAR (USER INPUT)
+# =========================================================
 with st.sidebar:
-    st.header("⚙️ Configuration")
-
+    st.header("Upload Your Data")
     uploaded = st.file_uploader(
-        "Upload internal links CSV",
+        "Upload your internal links CSV",
         type=["csv"],
-        help="Required columns (case-insensitive): source_url, target_url",
+        help="Your CSV must contain: source_url, target_url",
     )
 
-    st.markdown("**URL Normalization**")
-    strip_query = st.checkbox("Strip query parameters (?utm=…)", value=True)
-    strip_fragment = st.checkbox("Strip fragments (#section)", value=True)
+    st.markdown("### URL Cleaning Options")
+    strip_query = st.checkbox("Remove tracking parameters", True)
+    strip_fragment = st.checkbox("Remove #sections", True)
 
-    st.markdown("---")
-    st.markdown("**Navigation / Boilerplate Filtering**")
-
+    st.markdown("### Remove Navigation/Footer Links")
     boilerplate_threshold = st.slider(
-        "Hide targets linked from more than X% of pages",
-        min_value=0,
-        max_value=100,
-        value=80,
-        step=5,
-        help=(
-            "Targets linked from more than this percentage of unique pages "
-            "are treated as nav/footer and removed from the graph."
-        ),
+        "Hide pages linked from more than this % of your site",
+        0, 100, 80, 5,
     )
 
-    st.markdown("---")
-    st.markdown("**Authority Flow Model**")
-
+    st.markdown("### Authority Flow Settings")
     damping = st.slider(
-        "Damping factor (authority retained per hop)",
-        min_value=0.5,
-        max_value=0.95,
-        value=0.85,
-        step=0.05,
-        help="0.85 ≈ ~15% authority loss per hop.",
+        "Authority retained per hop (lower = more loss)",
+        0.5, 0.95, 0.85, 0.05,
     )
 
-    max_iter = st.slider(
-        "Max PageRank iterations",
-        min_value=10,
-        max_value=100,
-        value=50,
-        step=5,
-    )
-
-# ---------------------------------------------------------
-# MAIN CONTENT
-# ---------------------------------------------------------
-st.title("🕸️ Internal Authority Flow Analyzer")
-st.markdown(
-    "Understand how link authority moves through your site based on internal links."
-)
+# =========================================================
+# MAIN UI
+# =========================================================
+st.title("🌿 Internal Authority Flow Analyzer")
 
 st.markdown(
     """
 <div class="context-box">
-<strong>Concept:</strong> External backlinks give your site authority, but internal links decide where that authority actually goes.  
-This tool builds a map of your internal links and runs a PageRank-style model to show which pages accumulate authority and which ones are structurally weak.
+<strong>What this tool shows:</strong><br>
+• Which pages on your site receive the most internal authority  
+• Which pages are weak or isolated  
+• How your internal links help (or hurt) your important pages  
+<br><br>
+<strong>How it works:</strong>  
+We don't visit your pages or read content.  
+We only look at your internal link structure, because it controls how authority flows.
 </div>
 """,
     unsafe_allow_html=True,
 )
 
-if uploaded is None:
-    st.info(
-        "Upload a CSV of internal links in the sidebar to get started.\n\n"
-        "Minimum columns: `source_url`, `target_url`."
-    )
+if not uploaded:
+    st.info("Please upload a CSV file to continue.")
     st.stop()
 
-# ---------------------------------------------------------
+# =========================================================
 # LOAD & CLEAN DATA
-# ---------------------------------------------------------
-try:
-    df = pd.read_csv(uploaded)
-except Exception as e:
-    st.error(f"Could not read CSV file: {e}")
-    st.stop()
-
-# normalize column names to lowercase
+# =========================================================
+df = pd.read_csv(uploaded)
 df.columns = [c.lower() for c in df.columns]
-required_cols = {"source_url", "target_url"}
 
-if not required_cols.issubset(df.columns):
-    missing = required_cols - set(df.columns)
-    st.error(f"Missing required columns: {', '.join(missing)}")
+if not {"source_url", "target_url"}.issubset(df.columns):
+    st.error("Your CSV is missing required columns.")
     st.stop()
 
-df = df[["source_url", "target_url"]].dropna()
-
-# canonicalize URLs
 df["source_url_norm"] = df["source_url"].apply(
-    lambda x: canonicalize_url(x, strip_query=strip_query, strip_fragment=strip_fragment)
+    lambda x: canonicalize_url(x, strip_query, strip_fragment)
 )
 df["target_url_norm"] = df["target_url"].apply(
-    lambda x: canonicalize_url(x, strip_query=strip_query, strip_fragment=strip_fragment)
+    lambda x: canonicalize_url(x, strip_query, strip_fragment)
 )
 
 df = df[
     (df["source_url_norm"] != "") &
     (df["target_url_norm"] != "") &
     (df["source_url_norm"] != df["target_url_norm"])
-].copy()
+]
 
-if df.empty:
-    st.warning("No valid internal links after cleaning.")
-    st.stop()
-
-# ---------------------------------------------------------
-# BOILERPLATE / NAV FILTERING
-# ---------------------------------------------------------
+# Remove boilerplate (nav/footer)
 page_count = df["source_url_norm"].nunique()
 target_sources = (
     df.groupby("target_url_norm")["source_url_norm"]
     .nunique()
     .reset_index(name="num_sources")
 )
-
-target_sources["source_fraction"] = target_sources["num_sources"] / max(page_count, 1)
-boilerplate_cutoff = boilerplate_threshold / 100.0
+target_sources["source_fraction"] = target_sources["num_sources"] / page_count
 boilerplate_targets = set(
-    target_sources.loc[target_sources["source_fraction"] >= boilerplate_cutoff, "target_url_norm"]
+    target_sources.loc[target_sources["source_fraction"] >= boilerplate_threshold / 100, "target_url_norm"]
 )
 
-df_filtered = df[~df["target_url_norm"].isin(boilerplate_targets)].copy()
+df_filtered = df[~df["target_url_norm"].isin(boilerplate_targets)]
 
-if df_filtered.empty:
-    st.warning(
-        "After removing boilerplate/nav targets, no internal editorial links remain. "
-        "Try lowering the boilerplate threshold."
-    )
-    st.stop()
-
-# ---------------------------------------------------------
-# BUILD GRAPH & RUN PAGERANK
-# ---------------------------------------------------------
-adjacency, nodes = build_graph(df_filtered)
-pagerank_scores = compute_pagerank(
-    adjacency,
-    nodes,
-    damping=damping,
-    max_iter=max_iter,
-)
-
-if not pagerank_scores:
-    st.warning("Could not compute authority scores. Check your input data.")
-    st.stop()
+# =========================================================
+# GRAPH + PAGERANK
+# =========================================================
+adj, nodes = build_graph(df_filtered)
+scores = compute_pagerank(adj, nodes, damping=damping)
 
 df_scores = pd.DataFrame(
-    [{"url": u, "authority_score": s} for u, s in pagerank_scores.items()]
-).sort_values("authority_score", ascending=False)
+    [{"url": u, "authority": s} for u, s in scores.items()]
+)
+df_scores = df_scores.sort_values("authority", ascending=False)
+max_score = df_scores["authority"].max()
+df_scores["index"] = (df_scores["authority"] / max_score) * 100
 
-# normalize to 0–100 index
-max_score = df_scores["authority_score"].max()
-if max_score > 0:
-    df_scores["authority_index"] = (df_scores["authority_score"] / max_score) * 100
-else:
-    df_scores["authority_index"] = 0.0
+# =========================================================
+# OUTPUT
+# =========================================================
+c1, c2, c3 = st.columns(3)
 
-# ---------------------------------------------------------
-# METRICS
-# ---------------------------------------------------------
-col1, col2, col3, col4 = st.columns(4)
+c1.markdown(
+    f"""
+    <div class="metric-card">
+        <div class="metric-label">Pages Analyzed</div>
+        <div class="metric-value">{len(df_scores)}</div>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
 
-with col1:
-    st.markdown(
-        f"""
-        <div class="metric-card">
-            <div class="metric-label">Pages in Graph</div>
-            <div class="metric-value">{df_scores.shape[0]}</div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+c2.markdown(
+    f"""
+    <div class="metric-card">
+        <div class="metric-label">Internal Links Used</div>
+        <div class="metric-value">{len(df_filtered)}</div>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
 
-with col2:
-    st.markdown(
-        f"""
-        <div class="metric-card">
-            <div class="metric-label">Internal Links (filtered)</div>
-            <div class="metric-value">{df_filtered.shape[0]}</div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+c3.markdown(
+    f"""
+    <div class="metric-card">
+        <div class="metric-label">Navigation Links Removed</div>
+        <div class="metric-value">{len(boilerplate_targets)}</div>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
 
-with col3:
-    st.markdown(
-        f"""
-        <div class="metric-card">
-            <div class="metric-label">Boilerplate Targets Removed</div>
-            <div class="metric-value">{len(boilerplate_targets)}</div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-with col4:
-    st.markdown(
-        f"""
-        <div class="metric-card">
-            <div class="metric-label">Damping Factor</div>
-            <div class="metric-value">{damping:.2f}</div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-# ---------------------------------------------------------
-# CHART & TABLE
-# ---------------------------------------------------------
-st.markdown("### 🔎 Top Pages by Internal Authority")
-
-top_n = st.slider("Show top N pages", min_value=10, max_value=200, value=50, step=10)
+st.markdown("### 🔝 Your Strongest Pages (Top Authority)")
+top_n = st.slider("How many pages to display?", 10, 200, 40)
 
 fig = px.bar(
     df_scores.head(top_n),
-    x="authority_index",
+    x="index",
     y="url",
     orientation="h",
-    labels={
-        "authority_index": "Authority Index (0–100)",
-        "url": "URL",
-    },
-    height=600,
+    color="index",
+    color_continuous_scale=["#d1fae5", "#10b981"],
+    labels={"index": "Authority Index (0–100)", "url": ""},
 )
-fig.update_layout(
-    yaxis=dict(autorange="reversed"),
-    margin=dict(l=0, r=10, t=40, b=10),
-)
+fig.update_layout(yaxis=dict(autorange="reversed"))
 st.plotly_chart(fig, use_container_width=True)
 
-st.markdown("### 📄 Full Authority Table")
-
-st.dataframe(
-    df_scores[["url", "authority_score", "authority_index"]],
-    use_container_width=True,
-    hide_index=True,
-)
+st.markdown("### 📄 All Pages")
+st.dataframe(df_scores, hide_index=True, use_container_width=True)
 
 st.markdown(
     """
-**How to interpret the scores:**
-
-- `authority_score` is the raw PageRank value (all pages sum to 1.0).
-- `authority_index` rescales this so the strongest page becomes 100 and others scale relative to it.
-- Pages with higher indices are better positioned to receive and pass on internal authority.
-- If high-value/money pages have low indices, you likely need stronger internal links pointing to them.
+**How to read this:**  
+- A higher score means the page receives more internal authority  
+- Pages near index 100 are your strongest hubs  
+- Pages under 20 are weak, isolated, or poorly linked  
 """
 )
