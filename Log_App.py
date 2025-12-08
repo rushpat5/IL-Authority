@@ -3,7 +3,6 @@ from typing import Dict, List, Tuple
 
 import pandas as pd
 import plotly.express as px
-import requests
 import streamlit as st
 from urllib.parse import urlparse, urlunparse
 
@@ -255,6 +254,27 @@ with st.sidebar:
     )
 
     st.markdown("---")
+    st.markdown("**Asset Filtering (Recommended)**")
+
+    filter_assets = st.checkbox(
+        "Filter out images, scripts, PDFs, fonts, etc.",
+        value=True,
+        help="Removes non-HTML URLs such as .png, .svg, .css, .js, .pdf from the internal-link graph.",
+    )
+
+    with st.expander("Advanced asset filter settings"):
+        custom_ext_input = st.text_area(
+            "Blocked extensions (comma-separated)",
+            ".png, .jpg, .jpeg, .gif, .svg, .webp, .ico, .css, .js, .woff, .woff2, .ttf, .eot, .pdf, .zip",
+            help="Edit only if your site uses unusual file types.",
+        )
+        blocked_extensions = tuple(
+            ext.strip().lower()
+            for ext in custom_ext_input.split(",")
+            if ext.strip()
+        )
+
+    st.markdown("---")
     st.markdown("**Authority Flow Model**")
 
     damping = st.slider(
@@ -322,10 +342,14 @@ df = df[["source_url", "target_url"]].dropna()
 
 # canonicalize URLs
 df["source_url_norm"] = df["source_url"].apply(
-    lambda x: canonicalize_url(x, strip_query=strip_query, strip_fragment=strip_fragment)
+    lambda x: canonicalize_url(
+        x, strip_query=strip_query, strip_fragment=strip_fragment
+    )
 )
 df["target_url_norm"] = df["target_url"].apply(
-    lambda x: canonicalize_url(x, strip_query=strip_query, strip_fragment=strip_fragment)
+    lambda x: canonicalize_url(
+        x, strip_query=strip_query, strip_fragment=strip_fragment
+    )
 )
 
 df = df[
@@ -334,8 +358,33 @@ df = df[
     (df["source_url_norm"] != df["target_url_norm"])
 ].copy()
 
+# ---------------------------------------------------------
+# FILTER OUT NON-HTML ASSETS (images, scripts, fonts, PDFs)
+# ---------------------------------------------------------
+def is_asset(url: str) -> bool:
+    if not isinstance(url, str):
+        return False
+    url_lower = url.lower()
+    return any(url_lower.endswith(ext) for ext in blocked_extensions)
+
+if filter_assets:
+    df_before = df.shape[0]
+    df = df[
+        (~df["source_url_norm"].apply(is_asset)) &
+        (~df["target_url_norm"].apply(is_asset))
+    ].copy()
+    df_after = df.shape[0]
+
+    if df_before > 0:
+        removed_pct = (df_before - df_after) / df_before * 100
+        if removed_pct >= 80:
+            st.warning(
+                f"⚠️ Asset filtering removed {removed_pct:.1f}% of internal links. "
+                f"This may indicate your crawl export included mostly non-HTML resources."
+            )
+
 if df.empty:
-    st.warning("No valid internal links after cleaning.")
+    st.error("All links were filtered out (possibly due to asset filtering or URL normalization).")
     st.stop()
 
 # ---------------------------------------------------------
@@ -351,7 +400,9 @@ target_sources = (
 target_sources["source_fraction"] = target_sources["num_sources"] / max(page_count, 1)
 boilerplate_cutoff = boilerplate_threshold / 100.0
 boilerplate_targets = set(
-    target_sources.loc[target_sources["source_fraction"] >= boilerplate_cutoff, "target_url_norm"]
+    target_sources.loc[
+        target_sources["source_fraction"] >= boilerplate_cutoff, "target_url_norm"
+    ]
 )
 
 df_filtered = df[~df["target_url_norm"].isin(boilerplate_targets)].copy()
@@ -408,18 +459,22 @@ if key_pages_file is not None:
                     x, strip_query=strip_query, strip_fragment=strip_fragment
                 )
             )
-            df_keys = df_keys[df_keys["url_norm"] != ""].drop_duplicates(subset=["url_norm"])
+            df_keys = df_keys[df_keys["url_norm"] != ""].drop_duplicates(
+                subset=["url_norm"]
+            )
             total_key_pages = df_keys.shape[0]
 
-            # mark key pages in df_scores
             df_scores["is_key_page"] = df_scores["url"].isin(df_keys["url_norm"])
             has_key_pages = True
 
-            # compute authority share on key pages
-            authority_share_money = df_scores.loc[df_scores["is_key_page"], "authority_score"].sum()
+            authority_share_money = df_scores.loc[
+                df_scores["is_key_page"], "authority_score"
+            ].sum()
             matched_key_pages = int(df_scores["is_key_page"].sum())
         else:
-            st.warning("Key pages CSV must have a 'url' column. Ignoring key pages file.")
+            st.warning(
+                "Key pages CSV must have a 'url' column. Ignoring key pages file."
+            )
     except Exception as e:
         st.warning(f"Could not read key pages CSV: {e}")
 
@@ -489,7 +544,7 @@ with col5:
         )
     else:
         st.markdown(
-            f"""
+            """
             <div class="metric-card">
                 <div class="metric-label">Authority on Key Pages</div>
                 <div class="metric-value">–</div>
